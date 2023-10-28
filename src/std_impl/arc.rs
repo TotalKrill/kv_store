@@ -1,4 +1,4 @@
-use crate::{KeyValueStore, MutKeyValueStore};
+use crate::traits::{KeyValueStore, MutKeyValueStore};
 use std::{error::Error, sync::Arc};
 impl<T, K, V> KeyValueStore<K, V> for Arc<T>
 where

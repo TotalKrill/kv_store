@@ -59,7 +59,7 @@ macro_rules! simple_mutmap_impl {
     }
 }
 
-use crate::MutKeyValueStore;
+use crate::traits::MutKeyValueStore;
 use std::cmp::Ord;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;

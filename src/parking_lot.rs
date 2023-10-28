@@ -1,7 +1,9 @@
-use crate::{KeyValueStore, MutKeyValueStore};
+use crate::traits::{KeyValueStore, MutKeyValueStore};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::BTreeMap, error::Error, sync::Arc};
 
+/// Read write locked BTreeMap, that reduces WriteLocks by only using them when adding new keys, or removing keys,
+/// But not when updating already existing values, or adding to an already added key
 pub struct RwMutexMap<K, V>(pub RwLock<BTreeMap<K, Arc<Mutex<V>>>>)
 where
     V: Clone,
@@ -25,14 +27,33 @@ where
     type Err = Box<dyn Error>;
 
     fn insert(&self, key: K, value: V) -> Result<Option<V>, Self::Err> {
-        let mut map = self.0.write();
-        let ins = map.insert(key, Arc::new(Mutex::new(value)));
-        match ins {
-            Some(v) => {
-                let v = v.lock();
-                Ok(Some(v.clone()))
+        if self.contains(&key)? {
+            let mut old = None;
+            self.mutate(&key, |ov| {
+                match ov {
+                    Some(v) => {
+                        // just overwrite
+                        old = Some(v.clone());
+                        *v = value.clone();
+                    }
+                    None => {
+                        //TODO: Error out here, since it means that between the readlock,
+                        // and the mutate, the value was changed somewhere else
+                    }
+                }
+            })?;
+
+            Ok(old)
+        } else {
+            let mut map = self.0.write();
+            let ins = map.insert(key, Arc::new(Mutex::new(value)));
+            match ins {
+                Some(v) => {
+                    let v = v.lock();
+                    Ok(Some(v.clone()))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         }
     }
 
