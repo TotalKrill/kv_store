@@ -31,21 +31,23 @@ where
 
     /// runs a function that can mutate the value if it exists
     // returns true, if the value was mutated
-    async fn mutate<F>(&self, key: &K, f: F) -> Result<bool, Self::Err>
+    async fn get_mut<F>(&self, key: &K, f: F) -> Result<bool, Self::Err>
     where
         F: FnMut(&mut V) + Send;
 
-    /// mutates the value if it exists with the fiven FnMut, or inserts the given value
-    async fn mutate_or_insert<F>(&self, key: K, f: F, value: V) -> Result<(), Self::Err>
+    /// mutates the value if it exists with the fiven FnMut, or inserts default, then mutates it
+    async fn get_mut_or_default<F>(&self, key: K, mut f: F) -> Result<(), Self::Err>
     where
         F: FnMut(&mut V) + Send,
         K: 'async_trait,
-        V: 'async_trait,
+        V: 'async_trait + Default,
     {
         let v = self.contains(&key).await?;
         if v {
-            self.mutate(&key, f).await?;
+            self.get_mut(&key, f).await?;
         } else {
+            let mut value = Default::default();
+            f(&mut value);
             self.insert(key, value).await?;
         }
         Ok(())
