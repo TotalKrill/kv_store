@@ -4,10 +4,8 @@ pub mod prelude {
 
 pub mod traits;
 
-// #[cfg(feature = "impl")]
+#[cfg(feature = "impl")]
 pub mod parking_lot;
-
-//mod itertest;
 
 #[cfg(test)]
 pub mod test {
