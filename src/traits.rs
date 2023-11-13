@@ -30,7 +30,8 @@ where
         F: FnMut(Option<&V>) + Send;
 
     /// runs a function that can mutate the value if it exists
-    // returns true, if the value was mutated
+    /// returns true, if the entry existed
+    /// returns false, if the entry did not exist
     async fn get_mut<F>(&self, key: &K, f: F) -> Result<bool, Self::Err>
     where
         F: FnMut(&mut V) + Send;

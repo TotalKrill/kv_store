@@ -4,7 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+# impl = ["dep:parking_lot"]
 
 [dependencies]
 async-trait = "0.1.74"
-parking_lot = "0.12.1"
+
+[dependencies.parking_lot]
+version = "0.12.1"
+# optional = true
+
+[dev-dependencies.tokio]
+version = "1"
+features = ["full"]
