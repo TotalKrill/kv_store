@@ -1,4 +1,5 @@
-use crate::traits::{KeyValueStore, MutKeyValueStore};
+use crate::traits::KeyValueStore;
+use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use std::{collections::BTreeMap, error::Error, sync::Arc};
 
@@ -19,29 +20,23 @@ where
     }
 }
 
+#[async_trait]
 impl<K, V> KeyValueStore<K, V> for RwMutexMap<K, V>
 where
-    K: Ord,
-    V: Clone,
+    K: Ord + Send + Sync,
+    V: Clone + Send + Sync,
 {
     type Err = Box<dyn Error>;
 
-    fn insert(&self, key: K, value: V) -> Result<Option<V>, Self::Err> {
-        if self.contains(&key)? {
+    async fn insert(&self, key: K, value: V) -> Result<Option<V>, Self::Err> {
+        if self.contains(&key).await? {
             let mut old = None;
-            self.mutate(&key, |ov| {
-                match ov {
-                    Some(v) => {
-                        // just overwrite
-                        old = Some(v.clone());
-                        *v = value.clone();
-                    }
-                    None => {
-                        //TODO: Error out here, since it means that between the readlock,
-                        // and the mutate, the value was changed somewhere else
-                    }
-                }
-            })?;
+            self.get_mut(&key, |ov| {
+                // just overwrite
+                old = Some(ov.clone());
+                *ov = value.clone();
+            })
+            .await?;
 
             Ok(old)
         } else {
@@ -57,7 +52,7 @@ where
         }
     }
 
-    fn remove(&self, key: &K) -> Result<Option<V>, Self::Err> {
+    async fn remove(&self, key: &K) -> Result<Option<V>, Self::Err> {
         let mut map = self.0.write();
         let rm = map.remove(key);
         match rm {
@@ -69,30 +64,30 @@ where
         }
     }
 
-    fn contains(&self, key: &K) -> Result<bool, Self::Err> {
+    async fn contains(&self, key: &K) -> Result<bool, Self::Err> {
         let map = self.0.read();
-        Ok(map.contains(key)?)
+        Ok(map.contains_key(key))
     }
 
-    fn mutate<F>(&self, key: &K, mut f: F) -> Result<(), Self::Err>
+    async fn get_mut<F>(&self, key: &K, mut f: F) -> Result<bool, Self::Err>
     where
-        F: FnMut(Option<&mut V>),
+        F: FnMut(&mut V) + Send,
     {
         let map = self.0.read();
         let v = map.get(key);
         match v {
             Some(v) => {
                 let mut v = v.lock();
-                f(Some(&mut v));
-                Ok(())
+                f(&mut v);
+                Ok(true)
             }
-            None => Ok(()),
+            None => Ok(false),
         }
     }
 
-    fn for_each<F>(&self, mut f: F) -> Result<(), Self::Err>
+    async fn for_each<F>(&self, mut f: F) -> Result<(), Self::Err>
     where
-        F: FnMut((&K, &V)),
+        F: FnMut((&K, &V)) + Send,
     {
         let map = self.0.read();
         map.iter().for_each(|(k, v)| {
@@ -103,9 +98,9 @@ where
         Ok(())
     }
 
-    fn for_each_mut<F>(&self, mut f: F) -> Result<(), Self::Err>
+    async fn for_each_mut<F>(&self, mut f: F) -> Result<(), Self::Err>
     where
-        F: FnMut((&K, &mut V)),
+        F: FnMut((&K, &mut V)) + Send,
     {
         let map = self.0.read();
         map.iter().for_each(|(k, v)| {
@@ -116,9 +111,9 @@ where
         Ok(())
     }
 
-    fn inspect<F>(&self, key: &K, mut f: F) -> Result<(), Self::Err>
+    async fn inspect<F>(&self, key: &K, mut f: F) -> Result<(), Self::Err>
     where
-        F: FnMut(Option<&V>),
+        F: FnMut(Option<&V>) + Send,
     {
         let map = self.0.read();
         let v = map.get(key);
@@ -133,71 +128,55 @@ where
     }
 }
 
-impl<K, V> KeyValueStore<K, V> for RwLock<BTreeMap<K, V>>
+#[async_trait]
+impl<T, K, V> KeyValueStore<K, V> for Arc<T>
 where
-    V: Clone,
-    K: std::cmp::Ord,
+    T: KeyValueStore<K, V> + Send + Sync,
+    K: Ord + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
-    type Err = Box<dyn Error>;
+    type Err = <T as KeyValueStore<K, V>>::Err;
 
-    fn insert(&self, key: K, value: V) -> Result<Option<V>, Self::Err> {
-        let mut map = self.write();
-        Ok(map.insert(key, value))
+    async fn insert(&self, key: K, value: V) -> Result<Option<V>, Self::Err> {
+        Ok(T::insert(self, key, value).await?)
     }
-
-    fn remove(&self, key: &K) -> Result<Option<V>, Self::Err> {
-        let mut map = self.write();
-        let v = map.remove(key);
-        Ok(v)
+    async fn remove(&self, key: &K) -> Result<Option<V>, Self::Err> {
+        Ok(T::remove(self, key).await?)
     }
-
-    fn mutate<F>(&self, key: &K, f: F) -> Result<(), Self::Err>
+    async fn contains(&self, key: &K) -> Result<bool, Self::Err> {
+        Ok(T::contains(self, key).await?)
+    }
+    async fn get_mut<F>(&self, key: &K, f: F) -> Result<bool, Self::Err>
     where
-        F: FnMut(Option<&mut V>),
+        F: FnMut(&mut V) + Send,
     {
-        let mut map = self.write();
-        map.mutate(key, f)?;
-        Ok(())
+        Ok(T::get_mut(self, key, f).await?)
     }
-
-    fn contains(&self, key: &K) -> Result<bool, Self::Err> {
-        let map = self.read();
-        let b = map.contains(key)?;
-        Ok(b)
-    }
-
-    fn for_each<F>(&self, mut f: F) -> Result<(), Self::Err>
+    async fn for_each<F>(&self, f: F) -> Result<(), Self::Err>
     where
-        F: FnMut((&K, &V)),
+        F: FnMut((&K, &V)) + Send,
     {
-        let map = self.read();
-        map.iter().for_each(|v| f(v));
-        Ok(())
+        Ok(T::for_each(self, f).await?)
     }
-
-    fn for_each_mut<F>(&self, mut f: F) -> Result<(), Self::Err>
+    async fn for_each_mut<F>(&self, f: F) -> Result<(), Self::Err>
     where
-        F: FnMut((&K, &mut V)),
+        F: FnMut((&K, &mut V)) + Send,
     {
-        let mut map = self.write();
-        map.iter_mut().for_each(|v| f(v));
-        Ok(())
+        Ok(T::for_each_mut(self, f).await?)
     }
-
-    fn inspect<F>(&self, key: &K, mut f: F) -> Result<(), Self::Err>
+    async fn inspect<F>(&self, key: &K, f: F) -> Result<(), Self::Err>
     where
-        F: FnMut(Option<&V>),
+        F: FnMut(Option<&V>) + Send,
     {
-        let map = self.read();
-        let b = map.get(key);
-        f(b);
-        Ok(())
+        Ok(T::inspect(self, key, f).await?)
     }
 }
-#[test]
-fn test_rwmutexmap() {
+
+#[cfg(test)]
+#[tokio::test]
+async fn test_rwmutexmap() {
     use crate::parking_lot::RwMutexMap;
 
     let kvstore = Arc::new(RwMutexMap::new());
-    crate::test::test_impl(&kvstore);
+    crate::test::test_impl(&kvstore).await;
 }
