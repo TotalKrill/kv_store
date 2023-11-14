@@ -29,6 +29,9 @@ where
     where
         F: FnMut(Option<&V>) + Send;
 
+    /// Returns a cloned value of the given key
+    async fn get_clone(&self, key: &K) -> Result<Option<V>, Self::Err>;
+
     /// runs a function that can mutate the value if it exists
     /// returns true, if the entry existed
     /// returns false, if the entry did not exist
@@ -63,33 +66,6 @@ where
     async fn for_each_mut<F>(&self, f: F) -> Result<(), Self::Err>
     where
         F: FnMut((&K, &mut V)) + Send;
-}
-
-/// Trait that enables to get a cloned value for the given key
-#[async_trait]
-pub trait GetOwned<K, V> {
-    type Err;
-    /// Gets a owned clone of the data in the map
-    async fn get_owned(&self, key: &K) -> Result<Option<V>, Self::Err>;
-}
-
-#[async_trait]
-impl<T, K, V> GetOwned<K, V> for T
-where
-    T: KeyValueStore<K, V, Err = Box<dyn std::error::Error>> + Send + Sync,
-    K: Send + Sync,
-    V: Clone + Send,
-{
-    type Err = Box<dyn std::error::Error>;
-    async fn get_owned(&self, key: &K) -> Result<Option<V>, Self::Err> {
-        let mut outer = None;
-        self.inspect(key, |v| match v {
-            Some(v) => outer = Some(v.clone()),
-            None => outer = None,
-        })
-        .await?;
-        Ok(outer)
-    }
 }
 /// Trait that enables to get a cloned value for the given key
 #[async_trait]

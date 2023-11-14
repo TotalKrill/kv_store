@@ -1,5 +1,5 @@
 pub mod prelude {
-    pub use crate::traits::{GetBTreeMap, GetHashMap, GetOwned, KeyValueStore};
+    pub use crate::traits::{GetBTreeMap, GetHashMap, KeyValueStore};
 }
 
 pub mod traits;
